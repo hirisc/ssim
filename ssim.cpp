@@ -136,19 +136,12 @@ static void mul2d(const T src0[], const T src2[], real_t dst[], int width, int h
 	}
 }
 
-template <typename T>
-static void sub2d(const T src0[], const T src2[], real_t dst[], int width, int height) {
+template <typename T0, typename T2>
+static void sub2d(const T0 src0[], const T2 src2[], real_t dst[], int width, int height) {
 	int len = width * height;
 	for (int i = 0; i < len; ++i) {
 		dst[i] = static_cast<real_t>(src0[i]) - src2[i];
 	}
-}
-
-static void calc_sigma_sq(const uint8_t img1[], const uint8_t img2[], const real_t knl[], const real_t sq[], real_t dst[], int width, int height, int rad) {
-	static std::vector<real_t> tmp(width * height);
-	mul2d(&img1[0], &img2[0], &tmp[0], width, height);
-	conv2d(&tmp[0], knl, &dst[0], width, height, rad);
-	sub2d(&dst[0], &sq[0], &dst[0], width, height);
 }
 
 void ssimFrame(const uint8_t img1[], const uint8_t img2[], const real_t knl[], real_t dstsum[], int width, int height, int rad) {
@@ -157,6 +150,13 @@ void ssimFrame(const uint8_t img1[], const uint8_t img2[], const real_t knl[], r
 	static std::vector<real_t> mu1_sq(width * height);
 	static std::vector<real_t> mu2_sq(width * height);
 	static std::vector<real_t> mu1_mu2(width * height);
+
+	static std::vector<real_t> i1m1(width * height);
+	static std::vector<real_t> i2m2(width * height);
+	static std::vector<real_t> i1m1_sq(width * height);
+	static std::vector<real_t> i2m2_sq(width * height);
+	static std::vector<real_t> i1m1_i2m2(width * height);
+
 	static std::vector<real_t> sigma1_sq(width * height);
 	static std::vector<real_t> sigma2_sq(width * height);
 	static std::vector<real_t> sigma12(width * height);
@@ -166,9 +166,14 @@ void ssimFrame(const uint8_t img1[], const uint8_t img2[], const real_t knl[], r
 	mul2d(&mu2[0], &mu2[0], &mu2_sq[0], width, height);
 	mul2d(&mu1[0], &mu2[0], &mu1_mu2[0], width, height);
 
-	calc_sigma_sq(&img1[0], &img1[0], knl, &mu1_sq[0], &sigma1_sq[0], width, height, rad);
-	calc_sigma_sq(&img2[0], &img2[0], knl, &mu2_sq[0], &sigma2_sq[0], width, height, rad);
-	calc_sigma_sq(&img1[0], &img2[0], knl, &mu1_mu2[0], &sigma12[0], width, height, rad);
+	sub2d(&img1[0], &mu1[0], &i1m1[0], width, height);
+	sub2d(&img2[0], &mu2[0], &i2m2[0], width, height);
+	mul2d(&i1m1[0], &i1m1[0], &i1m1_sq[0], width, height);
+	mul2d(&i2m2[0], &i2m2[0], &i2m2_sq[0], width, height);
+	mul2d(&i1m1[0], &i2m2[0], &i1m1_i2m2[0], width, height);
+	conv2d(&i1m1_sq[0], knl, &sigma1_sq[0], width, height, rad);
+	conv2d(&i2m2_sq[0], knl, &sigma2_sq[0], width, height, rad);
+	conv2d(&i1m1_i2m2[0], knl, &sigma12[0], width, height, rad);
 
 	real_t k1 = 0.01;
 	real_t k2 = 0.03;
