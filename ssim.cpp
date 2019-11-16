@@ -51,9 +51,11 @@
 #include <string.h>
 #include "switches.h"
 #include "ssim_halide.h"
-#include "HalideBuf.h"
 #include "mmap_file.h"
 #include "getopt.h"
+#ifdef HALIDE
+#include "HalideBuf.h"
+#endif
 
 #ifdef VARIABLE_GAUSSIAN
 #define RAD rad
