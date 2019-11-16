@@ -93,13 +93,17 @@ public:
 
 	void schedule() {
 #define VEC 16
-		mu1.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
-		mu2.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
+		output.split(y, yo, yi, 8).parallel(yo).unroll(yi);
+		output.vectorize(x, VEC);
+
 		sigma1_sq.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
 		sigma2_sq.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
 		sigma12.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
-		output.split(y, yo, yi, 8).parallel(yo).unroll(yi);
-		output.vectorize(x, VEC);
+
+		mu1.store_root().compute_root();
+		mu2.store_root().compute_root();
+		mu1.split(y, yo, yi, 16).parallel(yo).vectorize(x, VEC);
+		mu2.split(y, yo, yi, 16).parallel(yo).vectorize(x, VEC);
 	}
 };
 
