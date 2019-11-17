@@ -87,20 +87,15 @@ static void extend_frame(const T src[], T dst[], int width, int height, int gap)
 template <typename T>
 static void build_gaussian(T knl[], int radius, double sigma) {
 	int dia = radius * 2 + 1;
-	int dia2 = dia * dia;
-	std::vector<double> not_normalized(dia2);
+	std::vector<double> not_normalized(dia);
 	double sum = 0.0;
 	double* k = &not_normalized[0];
-	for (int ry = -radius; ry <= radius; ++ry) {
-		double s = 0.0;
-		for (int rx = -radius; rx <= radius; ++rx) {
-			double e = std::exp(-(rx * rx + ry * ry) / (2.0 * sigma * sigma));
-			s += e;
-			*k++ = e;
-		}
-		sum += s;
+	for (int rx = -radius; rx <= radius; ++rx) {
+		double e = std::exp(-(rx * rx) / (2.0 * sigma * sigma));
+		sum += e;
+		*k++ = e;
 	}
-	for (int i = 0; i < dia2; ++i) {
+	for (int i = 0; i < dia; ++i) {
 		knl[i] = static_cast<T>(not_normalized[i] / sum);
 	}
 }
@@ -110,20 +105,29 @@ typedef double real_t;
 template <typename T>
 static void conv2d(const T src[], const real_t knl[], real_t dst[], int width, int height, int rad) {
 	static std::vector<T> src_extended((width + RAD * 2) * (height + RAD * 2));
+	static std::vector<real_t> tmp_buf(width * (height + RAD * 2));
 	extend_frame(&src[0], &src_extended[0], width, height, RAD);
 	int stride = width + RAD * 2;
 	const T* src_ex = &src_extended[stride * RAD + RAD];
+	real_t* tmp = &tmp_buf[width * RAD];
+
+#pragma omp parallel for
+	for (int y = -RAD; y < height + RAD; ++y) {
+		for (int x = 0; x < width; ++x) {
+			real_t sum = static_cast<real_t>(0.0);
+			for (int rx = -RAD; rx <= RAD; ++rx) {
+				sum += knl[rx + RAD] * src_ex[y * stride + x + rx];
+			}
+			tmp[y * width + x] = sum;
+		}
+	}
+
 #pragma omp parallel for
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
 			real_t sum = static_cast<real_t>(0.0);
-			const real_t* k = &knl[0];
 			for (int ry = -RAD; ry <= RAD; ++ry) {
-				real_t t = static_cast<real_t>(0.0);
-				for (int rx = -RAD; rx <= RAD; ++rx) {
-					t += *k++ * src_ex[(y + ry) * stride + x + rx];
-				}
-				sum += t;
+				sum += knl[ry + RAD] * tmp[(y + ry) * width + x];
 			}
 			dst[y * width + x] = sum;
 		}
@@ -183,12 +187,11 @@ void ssimFrame(const uint8_t img1[], const uint8_t img2[], const real_t knl[], r
 	int L = (1 << bitdepth) - 1;
 	real_t C1 = std::pow(k1 * L, 2.0);
 	real_t C2 = std::pow(k2 * L, 2.0);
-	int i = 0;
-	for (int y = 0; y < height; ++y) {
-		for (int x = 0; x < width; ++x, ++i) {
-			real_t d0 = ((2.0 * mu1_mu2[i] + C1) * (2.0 * sigma12[i] + C2)) / ((mu1_sq[i] + mu2_sq[i] + C1) * (sigma1_sq[i] + sigma2_sq[i] + C2));
-			dstsum[i] += d0;
-		}
+	int len = width * height;
+#pragma omp parallel for
+	for (int i = 0; i < len; ++i) {
+		real_t d0 = ((2.0 * mu1_mu2[i] + C1) * (2.0 * sigma12[i] + C2)) / ((mu1_sq[i] + mu2_sq[i] + C1) * (sigma1_sq[i] + sigma2_sq[i] + C2));
+		dstsum[i] += d0;
 	}
 }
 
@@ -275,12 +278,12 @@ public:
 		  srcbufb_(format_usize(fmt, width, true), format_usize(fmt, height, false)),
 		  src2buf_(width, height),
 		  src2bufb_(format_usize(fmt, width, true), format_usize(fmt, height, false)),
-		  gaussianbuf_((RAD * 2 + 1), (RAD * 2 + 1)),
+		  gaussianbuf_(RAD * 2 + 1),
 		  dstbuf_y_(width, height),
 		  dstbuf_u_(format_usize(fmt, width, true), format_usize(fmt, height, false)),
 		  dstbuf_v_(format_usize(fmt, width, true), format_usize(fmt, height, false))
 #else
-		  gaussian_((RAD * 2 + 1) * (RAD * 2 + 1))
+		  gaussian_(RAD * 2 + 1)
 #endif
 	{
 		ssim_sum_[0].resize(ysize_);
