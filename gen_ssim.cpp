@@ -38,21 +38,13 @@ class SsimGenerator : public Generator<SsimGenerator> {
 	Var x, y;
 	Var yi, yo;
 	Func mu1, mu2;
-	Func sigma1_sq, sigma2_sq, sigma12;
-
-	Func conv2d(Func src, Input<Buffer<float>>& kernel) {
-		Func dst("filtered");
-		RDom r(-RAD, DIA, -RAD, DIA);
-
-		dst(x, y) = sum(kernel(RAD + r.x, RAD + r.y) * src(x + r.x, y + r.y));
-
-		return dst;
-	}
-
+	Func sigma11, sigma22, sigma12;
+	Func mu1x, mu2x;
+	Func sigma11x, sigma22x, sigma12x;
 public:
 	Input<Buffer<uint8_t>> img1{"input1", 2};
 	Input<Buffer<uint8_t>> img2{"input2", 2};
-	Input<Buffer<float>> G{"kernel", 2};
+	Input<Buffer<float>> G{"kernel", 1};
 	Input<Buffer<float>> output_in{"outputin", 2};
 	Output<Buffer<float>> output{"output", 2};
 	void generate() {
@@ -61,24 +53,32 @@ public:
 		Func img1_ = BoundaryConditions::repeat_edge(img1);
 		Func img2_ = BoundaryConditions::repeat_edge(img2);
 		Func src1, src2;
+
 		src1(x, y) = cast<float>(img1_(x, y));
 		src2(x, y) = cast<float>(img2_(x, y));
 
-		mu1 = conv2d(src1, G);
-		mu2 = conv2d(src2, G);
+		RDom r(-RAD, DIA);
+		mu1x(x, y) = sum(G(RAD + r) * src1(x + r, y));
+		mu2x(x, y) = sum(G(RAD + r) * src2(x + r, y));
+		mu1(x, y) = sum(G(RAD + r) * mu1x(x, y + r));
+		mu2(x, y) = sum(G(RAD + r) * mu2x(x, y + r));
+
+		mu1_sq(x, y) = mu1(x, y) * mu1(x, y);
+		mu2_sq(x, y) = mu2(x, y) * mu2(x, y);
+		mu1_mu2(x, y) = mu1(x, y) * mu2(x, y);
 
 		i1m1(x, y) = src1(x, y) - mu1(x, y);
 		i2m2(x, y) = src2(x, y) - mu2(x, y);
 		i1m1_sq(x, y) = i1m1(x, y) * i1m1(x, y);
 		i2m2_sq(x, y) = i2m2(x, y) * i2m2(x, y);
 		i1m1_i2m2(x, y) = i1m1(x, y) * i2m2(x, y);
-		sigma1_sq = conv2d(i1m1_sq, G);
-		sigma2_sq = conv2d(i2m2_sq, G);
-		sigma12 = conv2d(i1m1_i2m2, G);
 
-		mu1_sq(x, y) = mu1(x, y) * mu1(x, y);
-		mu2_sq(x, y) = mu2(x, y) * mu2(x, y);
-		mu1_mu2(x, y) = mu1(x, y) * mu2(x, y);
+		sigma11x(x, y) = sum(G(RAD + r) * i1m1_sq(x + r, y));
+		sigma22x(x, y) = sum(G(RAD + r) * i2m2_sq(x + r, y));
+		sigma12x(x, y) = sum(G(RAD + r) * i1m1_i2m2(x + r, y));
+		sigma11(x, y) = sum(G(RAD + r) * sigma11x(x, y + r));
+		sigma22(x, y) = sum(G(RAD + r) * sigma22x(x, y + r));
+		sigma12(x, y) = sum(G(RAD + r) * sigma12x(x, y + r));
 
 		double k1 = 0.01;
 		double k2 = 0.03;
@@ -88,22 +88,24 @@ public:
 		output(x, y) = output_in(x, y)
 			+ (((2.0f * mu1_mu2(x, y) + C1) * (2.0f * sigma12(x, y) + C2))
 			   /
-			   ((mu1_sq(x, y) + mu2_sq(x, y) + C1) * (sigma1_sq(x, y) + sigma2_sq(x, y) + C2)));
+			   ((mu1_sq(x, y) + mu2_sq(x, y) + C1) * (sigma11(x, y) + sigma22(x, y) + C2)));
 	}
 
 	void schedule() {
 #define VEC 16
-		output.split(y, yo, yi, 8).parallel(yo).unroll(yi);
+		output.split(y, yo, yi, 16).parallel(yo);
 		output.vectorize(x, VEC);
-
-		sigma1_sq.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
-		sigma2_sq.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
-		sigma12.store_at(output, yo).compute_at(output, yo).vectorize(x, VEC);
-
+		mu1.split(y, yo, yi, 64).parallel(yo).vectorize(x, VEC);
+		mu2.split(y, yo, yi, 64).parallel(yo).vectorize(x, VEC);
 		mu1.store_root().compute_root();
 		mu2.store_root().compute_root();
-		mu1.split(y, yo, yi, 16).parallel(yo).vectorize(x, VEC);
-		mu2.split(y, yo, yi, 16).parallel(yo).vectorize(x, VEC);
+
+		mu1x.store_at(mu1, yo).compute_at(mu1, yi);
+		mu2x.store_at(mu2, yo).compute_at(mu2, yi);
+
+		sigma11x.store_at(output, yo).compute_at(output, yi).vectorize(x, VEC);
+		sigma22x.store_at(output, yo).compute_at(output, yi).vectorize(x, VEC);
+		sigma12x.store_at(output, yo).compute_at(output, yi).vectorize(x, VEC);
 	}
 };
 
